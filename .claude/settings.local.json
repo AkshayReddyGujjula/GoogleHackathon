@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find \"c:\\\\Users\\\\aksha\\\\Desktop\\\\Hackathons & Events\\\\GoogleHackathon\" -type f -name \"*.json\" -o -type f -name \"*.md\" -o -type f -name \"next.config.*\")"
+    ]
+  }
+}

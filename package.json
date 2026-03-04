@@ -1,0 +1,41 @@
+{
+  "name": "ai-tutor-whiteboard",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node node_modules/next/dist/bin/next dev",
+    "build": "node node_modules/next/dist/bin/next build",
+    "start": "node node_modules/next/dist/bin/next start",
+    "lint": "node node_modules/next/dist/bin/next lint"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AkshayReddyGujjula/GoogleHackathon.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/AkshayReddyGujjula/GoogleHackathon/issues"
+  },
+  "homepage": "https://github.com/AkshayReddyGujjula/GoogleHackathon#readme",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "fabric": "^7.2.0",
+    "next": "^16.1.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.1",
+    "@types/node": "^25.3.3",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/uuid": "^10.0.0",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^4.2.1",
+    "typescript": "^5.9.3"
+  }
+}
