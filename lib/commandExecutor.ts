@@ -62,9 +62,9 @@ async function executeSingle(
           top: cmd.coords.y,
           width: cmd.width ?? 120,
           height: cmd.height ?? 80,
-          fill: "transparent",
+          fill: cmd.fillColor ?? "transparent",
           stroke: color,
-          strokeWidth: 2.5,
+          strokeWidth: cmd.fillColor ? 1.5 : 2.5,
           selectable: false,
           evented: false,
           originX: "center",
@@ -104,13 +104,15 @@ async function executeSingle(
 
       // Optional label beneath the shape
       if (cmd.label) {
-        const label = new fabric.Text(cmd.label, {
+        const label = new fabric.Textbox(cmd.label, {
           left: cmd.coords.x,
           top: cmd.coords.y + (cmd.radius ?? 50) + 8,
+          width: 200,
           fontSize: 14,
           fill: color,
           selectable: false,
           evented: false,
+          textAlign: "center",
           originX: "center",
         });
         addObjectWithId(canvas, label);
@@ -119,17 +121,28 @@ async function executeSingle(
     }
 
     case "text": {
-      const text = new fabric.Text(cmd.content, {
+      // All text coords are treated as CENTER positions (consistent with shapes).
+      // Width is computed adaptively so text can't overflow the 900px canvas.
+      // Formula: widest box that fits symmetrically around the given x coordinate.
+      const halfAvail = Math.min(cmd.coords.x, 900 - cmd.coords.x);
+      const textWidth = Math.max(280, Math.min(840, halfAvail * 2 - 20));
+
+      const textbox = new fabric.Textbox(cmd.content, {
         left: cmd.coords.x,
         top: cmd.coords.y,
+        width: textWidth,
         fontSize: cmd.fontSize ?? 20,
         fontWeight: cmd.fontWeight ?? "normal",
         fill: cmd.color ?? "#111827",
         selectable: false,
         evented: false,
         fontFamily: "sans-serif",
+        originX: "center",
+        originY: "top",
+        textAlign: "center",
+        splitByGrapheme: false,
       });
-      addObjectWithId(canvas, text);
+      addObjectWithId(canvas, textbox);
       break;
     }
 

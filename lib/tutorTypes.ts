@@ -16,6 +16,8 @@ export interface DrawCommand {
   /** Optional second point for lines */
   coords2?: { x: number; y: number };
   color?: string;
+  /** Optional fill color for rect (defaults to transparent) */
+  fillColor?: string;
   radius?: number;
   width?: number;
   height?: number;

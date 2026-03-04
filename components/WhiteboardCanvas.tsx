@@ -17,6 +17,10 @@ export interface WhiteboardCanvasHandle {
   clear: () => void;
   /** Expose addObjectWithId bound to this canvas */
   addObject: (fabricObj: Parameters<typeof addObjectWithId>[1], customId?: string) => ReturnType<typeof addObjectWithId>;
+  /** Undo the last student-drawn path */
+  undoStudentPath: () => void;
+  /** Reset the undo stack (call when starting a new subtopic) */
+  clearStudentPaths: () => void;
 }
 
 interface WhiteboardCanvasProps {
@@ -29,6 +33,8 @@ const WhiteboardCanvas = forwardRef<WhiteboardCanvasHandle, WhiteboardCanvasProp
   ({ turnState, width = 900, height = 600 }, ref) => {
     const canvasElRef = useRef<HTMLCanvasElement>(null);
     const fabricRef = useRef<FabricCanvas | null>(null);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const studentPathsRef = useRef<any[]>([]);
 
     // Initialize Fabric.js canvas once on mount.
     // The `cancelled` flag guards against React Strict Mode's double-invoke:
@@ -58,13 +64,16 @@ const WhiteboardCanvas = forwardRef<WhiteboardCanvasHandle, WhiteboardCanvasProp
         canvas.freeDrawingBrush.width = 3;
         (canvas.freeDrawingBrush as { color: string }).color = "#1e293b";
 
-        // Every path the student draws also gets a unique ID
+        // Every path the student draws gets a unique ID and is tracked for undo
         canvas.on("path:created", (e) => {
           const path = e.path;
-          if (path && !(path as typeof path & { id?: string }).id) {
-            import("@/lib/canvasUtils").then(({ generateObjectId }) => {
-              (path as typeof path & { id: string }).id = generateObjectId();
-            });
+          if (path) {
+            studentPathsRef.current.push(path);
+            if (!(path as typeof path & { id?: string }).id) {
+              import("@/lib/canvasUtils").then(({ generateObjectId }) => {
+                (path as typeof path & { id: string }).id = generateObjectId();
+              });
+            }
           }
         });
 
@@ -120,6 +129,16 @@ const WhiteboardCanvas = forwardRef<WhiteboardCanvasHandle, WhiteboardCanvasProp
       },
       addObject(fabricObj, customId) {
         return addObjectWithId(fabricRef.current!, fabricObj, customId);
+      },
+      undoStudentPath() {
+        const canvas = fabricRef.current;
+        if (!canvas || studentPathsRef.current.length === 0) return;
+        const last = studentPathsRef.current.pop();
+        canvas.remove(last);
+        canvas.renderAll();
+      },
+      clearStudentPaths() {
+        studentPathsRef.current = [];
       },
     }));
 

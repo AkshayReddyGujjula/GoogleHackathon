@@ -47,7 +47,6 @@ function CanvasHistorySidebar({
           </button>
         ))}
       </div>
-
       {modalSrc && (
         <div
           className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
@@ -59,10 +58,7 @@ function CanvasHistorySidebar({
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={modalSrc} alt="Subtopic snapshot" className="w-full rounded" />
-            <button
-              onClick={() => setModalSrc(null)}
-              className="mt-3 w-full text-sm text-gray-500 hover:text-gray-700"
-            >
+            <button onClick={() => setModalSrc(null)} className="mt-3 w-full text-sm text-gray-500 hover:text-gray-700">
               Close
             </button>
           </div>
@@ -72,17 +68,15 @@ function CanvasHistorySidebar({
   );
 }
 
-// ── Push-to-Talk ──────────────────────────────────────────────────────────────
-// IMPORTANT: webkitSpeechRecognition.start() must be called SYNCHRONOUSLY
-// within the user gesture handler. We eagerly import voiceUtils on mount and
-// store the function in a ref so the mousedown handler is synchronous.
+// ── Ask-a-Question Button ─────────────────────────────────────────────────────
+// Click once to START recording (interrupts AI speech immediately).
+// Click again (Stop) to END recording and send transcript to AI.
+// Works at any time — even while AI is speaking.
 
-function PushToTalkButton({
+function AskQuestionButton({
   onInterrupt,
-  disabled,
 }: {
   onInterrupt: (transcript: string) => void;
-  disabled: boolean;
 }) {
   const [isListening, setIsListening] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -90,60 +84,56 @@ function PushToTalkButton({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const startListeningRef = useRef<any>(null);
 
-  // Eagerly load the function so it's available synchronously on gesture
   useEffect(() => {
     import("@/lib/voiceUtils").then(({ startListening }) => {
       startListeningRef.current = startListening;
     });
   }, []);
 
-  const startTalk = () => {
-    if (disabled || isListening || !startListeningRef.current) return;
+  const handleClick = () => {
+    if (isListening) {
+      // Stop recording and let onresult fire with the transcript
+      recognitionRef.current?.stop();
+      return;
+    }
+    if (!startListeningRef.current) return;
+    // Stop AI speech immediately
+    window.speechSynthesis?.cancel();
     setIsListening(true);
-    // Called synchronously — no await — so the browser accepts it as a user gesture
     recognitionRef.current = startListeningRef.current(
-      (transcript: string) => {
-        setIsListening(false);
-        onInterrupt(transcript);
-      },
+      (transcript: string) => { setIsListening(false); onInterrupt(transcript); },
       () => setIsListening(false)
     );
   };
 
-  const stopTalk = () => {
-    recognitionRef.current?.stop();
-    // Don't set isListening=false here — wait for onresult/onerror callbacks
-  };
-
   return (
     <button
-      onMouseDown={startTalk}
-      onMouseUp={stopTalk}
-      onTouchStart={startTalk}
-      onTouchEnd={stopTalk}
-      disabled={disabled || !startListeningRef.current}
-      title="Hold to ask a question"
+      onClick={handleClick}
+      title={isListening ? "Stop recording and send question" : "Ask Prof. Alex a question (interrupts AI)"}
       className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border transition-all select-none
         ${isListening
-          ? "bg-red-500 border-red-500 text-white animate-pulse"
-          : disabled
-            ? "bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed"
-            : "bg-white border-gray-300 text-gray-700 hover:border-violet-400 hover:text-violet-700 cursor-pointer"
+          ? "bg-red-500 border-red-600 text-white animate-pulse shadow-lg"
+          : "bg-white border-gray-300 text-gray-700 hover:border-violet-400 hover:text-violet-700 cursor-pointer"
         }`}
     >
-      {isListening ? "🎙️ Listening..." : "🎤 Hold to Ask"}
+      {isListening ? "⏹ Stop & Send" : "🎤 Ask a Question"}
     </button>
   );
 }
 
-// ── Subtitle bar ──────────────────────────────────────────────────────────────
+// ── Rolling subtitle bar ──────────────────────────────────────────────────────
+// `spokenSoFar` grows word-by-word via onboundary events.
+// We display only the last 12 words so it scrolls like real subtitles.
 
-function SubtitleBar({ text }: { text: string }) {
-  if (!text) return null;
+function SubtitleBar({ spokenSoFar }: { spokenSoFar: string }) {
+  if (!spokenSoFar) return null;
+  const words = spokenSoFar.trim().split(/\s+/);
+  const display = words.length > 12 ? words.slice(-12).join(" ") : spokenSoFar;
+
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-40 flex justify-center pb-4 px-6 pointer-events-none">
-      <div className="bg-black/80 backdrop-blur-sm text-white text-center rounded-xl px-8 py-3 max-w-3xl text-base leading-relaxed shadow-2xl">
-        {text}
+    <div className="fixed bottom-0 left-0 right-0 z-40 flex justify-center pb-5 px-6 pointer-events-none">
+      <div className="bg-black/85 backdrop-blur-sm text-white rounded-xl px-8 py-3 max-w-3xl text-[17px] leading-snug shadow-2xl text-center">
+        {display}
       </div>
     </div>
   );
@@ -164,13 +154,24 @@ function WhiteboardInner() {
   const [canvasHistory, setCanvasHistory] = useState<string[]>([]);
   const [statusMessage, setStatusMessage] = useState("Preparing your lesson...");
   const [isLoading, setIsLoading] = useState(false);
+
+  // Subtitle state: grows word-by-word via onboundary events
   const [subtitle, setSubtitle] = useState("");
+
+  // Pause state — speechSynthesis.pause() preserves voice + position perfectly
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  // Ref version for use inside async speak callbacks (avoids stale closure)
+  const isPausedRef = useRef(false);
+
+  // Current question shown to student while it's their turn
+  const [currentQuestion, setCurrentQuestion] = useState("");
 
   const subtopicIndexRef = useRef(0);
   const studentHistoryRef = useRef<string[]>([]);
   const isFirstTurnRef = useRef(true);
 
-  // Cancel speech on unmount (e.g. End Lesson while AI is speaking)
+  // Cancel speech on unmount (End Lesson while AI is mid-sentence)
   useEffect(() => {
     return () => { window.speechSynthesis?.cancel(); };
   }, []);
@@ -180,40 +181,43 @@ function WhiteboardInner() {
     if (!educationLevel || !subject || !topic) router.replace("/");
   }, [educationLevel, subject, topic, router]);
 
-  /** Place a generated image on the canvas (right side) */
+  const handlePause = useCallback(() => {
+    window.speechSynthesis?.pause();
+    isPausedRef.current = true;
+    setIsPaused(true);
+    setSubtitle("");
+  }, []);
+
+  const handleResume = useCallback(() => {
+    window.speechSynthesis?.resume();
+    isPausedRef.current = false;
+    setIsPaused(false);
+  }, []);
+
+  /** Place a Pollinations.ai generated image on the right side of the canvas */
   const placeImage = useCallback(async (imagePrompt: string) => {
     const canvas = canvasRef.current?.fabricCanvas;
     if (!canvas) return;
-
-    // Pollinations.ai: free, no auth, CORS-enabled educational image generation
-    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
-      `educational diagram: ${imagePrompt}, clean white background, labeled, scientific illustration style`
-    )}?width=380&height=280&nologo=true&seed=${Date.now()}`;
-
+    const url =
+      `https://image.pollinations.ai/prompt/` +
+      encodeURIComponent(
+        `educational diagram: ${imagePrompt}, clean white background, labeled, scientific illustration`
+      ) +
+      `?width=380&height=280&nologo=true&seed=${Date.now()}`;
     try {
       const { FabricImage } = await import("fabric");
       const { addObjectWithId } = await import("@/lib/canvasUtils");
       const img = await FabricImage.fromURL(url, { crossOrigin: "anonymous" });
-      const targetW = 360;
-      const scale = targetW / (img.width ?? targetW);
-      img.set({
-        left: 680, // right-center of canvas
-        top: 240,
-        scaleX: scale,
-        scaleY: scale,
-        selectable: false,
-        evented: false,
-        originX: "center",
-        originY: "center",
-      });
+      const scale = 360 / (img.width ?? 360);
+      img.set({ left: 690, top: 230, scaleX: scale, scaleY: scale, selectable: false, evented: false, originX: "center", originY: "center" });
       addObjectWithId(canvas, img);
       canvas.renderAll();
     } catch (err) {
-      console.warn("[Image] Failed to load image:", err);
+      console.warn("[Image] Failed to load:", err);
     }
   }, []);
 
-  /** Core AI turn: call API, draw on canvas, speak, hand over to student */
+  /** Core AI turn loop */
   const runAiTurn = useCallback(
     async (canvasBase64?: string) => {
       setIsLoading(true);
@@ -225,9 +229,7 @@ function WhiteboardInner() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            educationLevel,
-            subject,
-            topic,
+            educationLevel, subject, topic,
             subtopicIndex: subtopicIndexRef.current,
             canvasBase64,
             studentHistory: studentHistoryRef.current,
@@ -239,38 +241,55 @@ function WhiteboardInner() {
         const data: TutorResponse = await res.json();
         isFirstTurnRef.current = false;
 
-        // 1. Execute canvas drawing commands
+        // 1. Clear canvas + reset undo stack, then draw new commands
+        canvasRef.current?.clear();
+        canvasRef.current?.clearStudentPaths();
         if (data.canvas_commands?.length && canvasRef.current?.fabricCanvas) {
           const { executeCanvasCommands } = await import("@/lib/commandExecutor");
           await executeCanvasCommands(canvasRef.current.fabricCanvas, data.canvas_commands);
         }
 
-        // 2. Generate and place image if requested (runs in parallel with speaking)
+        // 2. Start image generation in parallel with speech
         const imagePromise = data.image_prompt
           ? placeImage(data.image_prompt)
           : Promise.resolve();
 
-        // 3. Speak the response with live subtitles
+        // 3. Speak with rolling subtitle — gate updates through isPausedRef
+        //    so subtitles freeze instantly on pause regardless of browser behaviour
         if (data.speech) {
-          setSubtitle(data.speech);
+          setSubtitle("");
           setStatusMessage("Prof. Alex is speaking...");
+          setIsSpeaking(true);
           const { speak } = await import("@/lib/voiceUtils");
-          await Promise.all([speak(data.speech), imagePromise]);
+          await Promise.all([
+            speak(data.speech, { onWord: (s) => { if (!isPausedRef.current) setSubtitle(s); } }),
+            imagePromise,
+          ]);
+          setIsSpeaking(false);
           setSubtitle("");
         } else {
           await imagePromise;
         }
 
-        // 4. Handle lesson flow
+        // 4. Lesson flow
         if (data.status === "SUBTOPIC_COMPLETE") {
+          setCurrentQuestion("");
+          // Snapshot AFTER the AI drew its summary — this is what goes in the sidebar
           const snapshot = canvasRef.current?.toBase64() ?? "";
           if (snapshot) setCanvasHistory((prev) => [...prev, snapshot]);
           canvasRef.current?.clear();
+          canvasRef.current?.clearStudentPaths();
           subtopicIndexRef.current += 1;
           studentHistoryRef.current = [];
+          isFirstTurnRef.current = true; // new subtopic = fresh intro
           setStatusMessage("Moving to next subtopic...");
           await runAiTurn(undefined);
         } else {
+          // Extract question text from the question-box text command (y≈450)
+          const qCmd = data.canvas_commands?.find(
+            (cmd) => cmd.action === "text" && Math.abs(cmd.coords.y - 450) < 40
+          );
+          setCurrentQuestion(qCmd && qCmd.action === "text" ? qCmd.content : "");
           setTurnState("STUDENT_TURN");
           setStatusMessage("Your turn — draw your answer on the board!");
           setIsLoading(false);
@@ -278,6 +297,7 @@ function WhiteboardInner() {
       } catch (err) {
         console.error("[WhiteboardPage] AI turn error:", err);
         setSubtitle("");
+        setIsSpeaking(false);
         setStatusMessage("Connection issue — please try submitting again.");
         setTurnState("STUDENT_TURN");
         setIsLoading(false);
@@ -286,31 +306,30 @@ function WhiteboardInner() {
     [educationLevel, subject, topic, placeImage]
   );
 
-  // Fire first AI turn once canvas is mounted
+  // Fire first AI turn once canvas has mounted (800ms lets Fabric finish init)
   useEffect(() => {
     if (!educationLevel || !subject || !topic) return;
-    const timer = setTimeout(() => runAiTurn(undefined), 800);
-    return () => clearTimeout(timer);
+    const t = setTimeout(() => runAiTurn(undefined), 800);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** Student submits drawing */
+  /** Student submits their drawing */
   const handleSubmit = useCallback(async () => {
+    setCurrentQuestion("");
     const snapshot = canvasRef.current?.toBase64() ?? "";
-    studentHistoryRef.current.push(
-      `[Student submitted work for subtopic ${subtopicIndexRef.current + 1}]`
-    );
+    studentHistoryRef.current.push(`[Student submitted work for subtopic ${subtopicIndexRef.current + 1}]`);
     await runAiTurn(snapshot);
   }, [runAiTurn]);
 
-  /** Handle Push-to-Talk interrupt */
+  /** Push-to-Talk interrupt */
   const handleInterrupt = useCallback(
     async (transcript: string) => {
       if (!transcript.trim()) return;
-
       window.speechSynthesis?.cancel();
       setSubtitle("");
-
+      setIsSpeaking(false);
+      setIsPaused(false);
       setStatusMessage(`Processing: "${transcript}"`);
 
       try {
@@ -320,8 +339,7 @@ function WhiteboardInner() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ transcribedText: transcript, canvasBase64: snapshot }),
         });
-
-        if (!res.ok) throw new Error("Interrupt API failed");
+        if (!res.ok) throw new Error("Interrupt failed");
         const data: TutorResponse = await res.json();
 
         if (data.canvas_commands?.length && canvasRef.current?.fabricCanvas) {
@@ -330,9 +348,11 @@ function WhiteboardInner() {
         }
 
         if (data.speech) {
-          setSubtitle(data.speech);
+          setSubtitle("");
+          setIsSpeaking(true);
           const { speak } = await import("@/lib/voiceUtils");
-          await speak(data.speech);
+          await speak(data.speech, { onWord: (s) => setSubtitle(s) });
+          setIsSpeaking(false);
           setSubtitle("");
         }
 
@@ -342,8 +362,9 @@ function WhiteboardInner() {
             : "Prof. Alex is presenting..."
         );
       } catch (err) {
-        console.error("[Interrupt] Error:", err);
+        console.error("[Interrupt]", err);
         setSubtitle("");
+        setIsSpeaking(false);
       }
     },
     [turnState]
@@ -351,7 +372,6 @@ function WhiteboardInner() {
 
   const handleEndLesson = () => {
     window.speechSynthesis?.cancel();
-    setSubtitle("");
     router.push("/");
   };
 
@@ -368,26 +388,23 @@ function WhiteboardInner() {
             <h1 className="text-base font-semibold text-gray-900">
               {subject} — {topic}
             </h1>
-            <p className="text-xs text-gray-500">{educationLevel} · Subtopic {subtopicIndexRef.current + 1}</p>
+            <p className="text-xs text-gray-500">
+              {educationLevel} · Subtopic {subtopicIndexRef.current + 1}
+            </p>
           </div>
           <div className="flex items-center gap-4">
             {isLoading && (
-              <div className="flex items-center gap-2">
-                <div className="flex gap-1">
-                  {[0, 1, 2].map((i) => (
-                    <div
-                      key={i}
-                      className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-bounce"
-                      style={{ animationDelay: `${i * 0.15}s` }}
-                    />
-                  ))}
-                </div>
-                <span className="text-sm text-gray-500">{statusMessage}</span>
+              <div className="flex gap-1">
+                {[0, 1, 2].map((i) => (
+                  <div
+                    key={i}
+                    className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-bounce"
+                    style={{ animationDelay: `${i * 0.15}s` }}
+                  />
+                ))}
               </div>
             )}
-            {!isLoading && (
-              <span className="text-sm text-gray-500">{statusMessage}</span>
-            )}
+            <span className="text-sm text-gray-500 max-w-xs truncate">{statusMessage}</span>
             <button
               onClick={handleEndLesson}
               className="text-xs text-gray-400 hover:text-red-500 underline transition-colors"
@@ -398,8 +415,19 @@ function WhiteboardInner() {
         </header>
 
         {/* Canvas */}
-        <main className="flex-1 flex items-center justify-center p-6 overflow-auto pb-20">
+        <main className="flex-1 flex items-center justify-center p-6 overflow-auto pb-24">
           <div className="flex flex-col gap-4 items-center">
+            {/* Blinking question banner — visible only on student turn */}
+            {turnState === "STUDENT_TURN" && currentQuestion && (
+              <div className="w-[900px] max-w-full">
+                <div className="animate-pulse bg-red-50 border-2 border-red-500 rounded-lg px-5 py-3 text-center">
+                  <span className="text-red-600 font-bold text-base">
+                    ❓ {currentQuestion}
+                  </span>
+                </div>
+              </div>
+            )}
+
             <WhiteboardCanvas
               ref={canvasRef}
               turnState={turnState}
@@ -407,55 +435,66 @@ function WhiteboardInner() {
               height={500}
             />
 
-            {/* Controls row */}
-            <div className="flex items-center gap-4">
+            {/* Controls */}
+            <div className="flex items-center gap-3 flex-wrap justify-center">
+              {/* Pause / Resume — only visible while AI is speaking */}
+              {isSpeaking && (
+                <button
+                  onClick={isPaused ? handleResume : handlePause}
+                  className={`flex items-center gap-2 px-5 py-2 rounded-full text-sm font-semibold border transition-all
+                    ${isPaused
+                      ? "bg-green-50 border-green-400 text-green-700 hover:bg-green-100"
+                      : "bg-amber-50 border-amber-400 text-amber-700 hover:bg-amber-100"
+                    }`}
+                >
+                  {isPaused ? "▶ Resume" : "⏸ Pause"}
+                </button>
+              )}
+
               {turnState === "STUDENT_TURN" && (
                 <>
+                  <button
+                    onClick={() => canvasRef.current?.undoStudentPath()}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 bg-white text-gray-600 hover:border-gray-400 hover:text-gray-800 transition-colors"
+                    title="Undo last stroke (Ctrl+Z)"
+                  >
+                    ↩ Undo
+                  </button>
                   <button
                     onClick={handleSubmit}
                     className="bg-green-600 hover:bg-green-700 text-white font-semibold px-8 py-2.5 rounded-lg transition-colors shadow"
                   >
                     Submit Answer →
                   </button>
-                  <span className="text-sm text-gray-400">
-                    Draw your answer above, then submit
-                  </span>
                 </>
               )}
 
-              {turnState === "AI_TURN" && !isLoading && (
+              {turnState === "AI_TURN" && !isLoading && !isSpeaking && (
                 <span className="text-sm text-violet-600 font-medium flex items-center gap-2">
-                  <span className="inline-block w-2 h-2 rounded-full bg-violet-500 animate-pulse" />
+                  <span className="w-2 h-2 rounded-full bg-violet-500 animate-pulse inline-block" />
                   Prof. Alex is presenting...
                 </span>
               )}
 
-              <PushToTalkButton
-                onInterrupt={handleInterrupt}
-                disabled={isLoading}
-              />
+              <AskQuestionButton onInterrupt={handleInterrupt} />
             </div>
           </div>
         </main>
       </div>
 
-      {/* Live subtitle bar — fixed at the bottom of the screen */}
-      <SubtitleBar text={subtitle} />
+      {/* Rolling subtitle bar */}
+      <SubtitleBar spokenSoFar={subtitle} />
     </div>
   );
 }
 
-// ── Route entry point ─────────────────────────────────────────────────────────
-
 export default function WhiteboardPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen flex items-center justify-center">
-          <p className="text-gray-500">Loading whiteboard...</p>
-        </div>
-      }
-    >
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-gray-500">Loading whiteboard...</p>
+      </div>
+    }>
       <WhiteboardInner />
     </Suspense>
   );
